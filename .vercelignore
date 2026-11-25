@@ -1,0 +1,26 @@
+# Git & Local Environments
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Legacy Streamlit App & Configs (Không đóng gói lên Vercel Function)
+app.py
+.streamlit/
+bao_cao_tong_quan_du_an.md
+
+# Offline Benchmark Data & Evaluation Scripts (~1.4MB)
+data/golden_dataset_120.json
+evaluate_benchmark.py
+tests/
+
+# Temporary & Dump files
+sample_scanned_contract.png
+*_inspect.txt
+docx_dump.txt
+*.docx
