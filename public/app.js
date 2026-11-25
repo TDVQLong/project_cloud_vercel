@@ -278,14 +278,20 @@ Hai bên cùng thỏa thuận ký kết hợp đồng với các điều khoản
   }
 
   // =========================================================================
-  // 6. XỬ LÝ KÉO THẢ TỆP & OCR
+  // 6. XỬ LÝ KÉO THẢ TỆP & OCR (HỖ TRỢ TỐI ĐA 7 TỆP / ẢNH)
   // =========================================================================
   const dropZone = document.getElementById("drop-zone");
   const fileInput = document.getElementById("file-input");
   const fileInfo = document.getElementById("file-info");
+  const fileChips = document.getElementById("file-chips");
+  let currentUploadedFiles = [];
 
   if (dropZone && fileInput) {
-    dropZone.addEventListener("click", () => fileInput.click());
+    dropZone.addEventListener("click", (e) => {
+      // Tránh mở hộp chọn tệp khi người dùng nhấn nút xóa chip
+      if (e.target.closest(".chip-remove")) return;
+      fileInput.click();
+    });
 
     ["dragenter", "dragover"].forEach(evtName => {
       dropZone.addEventListener(evtName, (e) => {
@@ -303,25 +309,83 @@ Hai bên cùng thỏa thuận ký kết hợp đồng với các điều khoản
 
     dropZone.addEventListener("drop", (e) => {
       const files = e.dataTransfer.files;
-      if (files.length) handleFileUpload(files[0]);
+      if (files && files.length) {
+        addUploadedFiles(Array.from(files));
+      }
     });
 
     fileInput.addEventListener("change", (e) => {
-      if (e.target.files.length) handleFileUpload(e.target.files[0]);
+      if (e.target.files && e.target.files.length) {
+        addUploadedFiles(Array.from(e.target.files));
+        fileInput.value = ""; // Cho phép chọn lại cùng tệp nếu muốn
+      }
     });
   }
 
-  async function handleFileUpload(file) {
-    if (!file) return;
+  function addUploadedFiles(newFiles) {
+    if (!newFiles || newFiles.length === 0) return;
 
-    const lowerName = file.name.toLowerCase();
-    const isBinary = lowerName.endsWith(".docx") || lowerName.endsWith(".doc") ||
-                     lowerName.endsWith(".pdf") || lowerName.endsWith(".png") ||
-                     lowerName.endsWith(".jpg") || lowerName.endsWith(".jpeg") ||
-                     lowerName.endsWith(".webp") || (file.type && file.type.startsWith("image/"));
+    // Ghép thêm tệp mới, lọc trùng tên
+    for (const f of newFiles) {
+      if (!currentUploadedFiles.some(existing => existing.name === f.name && existing.size === f.size)) {
+        currentUploadedFiles.push(f);
+      }
+    }
+
+    if (currentUploadedFiles.length > 7) {
+      alert("Hệ thống hỗ trợ ghép nối tối đa 7 tệp / phụ lục / ảnh chụp cùng lúc. Đã tự động giữ lại 7 tệp đầu tiên.");
+      currentUploadedFiles = currentUploadedFiles.slice(0, 7);
+    }
+
+    renderFileChips();
+    processUploadedFiles();
+  }
+
+  function renderFileChips() {
+    if (!fileChips) return;
+    if (currentUploadedFiles.length === 0) {
+      fileChips.innerHTML = "";
+      fileChips.classList.add("hidden");
+      return;
+    }
+
+    fileChips.classList.remove("hidden");
+    fileChips.innerHTML = currentUploadedFiles.map((f, idx) => {
+      const displayName = f.name.length > 25 ? f.name.substring(0, 22) + "..." : f.name;
+      const sizeKb = (f.size / 1024).toFixed(1);
+      return `<span class="file-chip" title="${f.name} (${sizeKb} KB)">
+        📄 ${displayName}
+        <span class="chip-remove" data-index="${idx}" title="Xóa tệp này">&times;</span>
+      </span>`;
+    }).join("");
+
+    fileChips.querySelectorAll(".chip-remove").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const removeIdx = parseInt(btn.dataset.index, 10);
+        currentUploadedFiles.splice(removeIdx, 1);
+        renderFileChips();
+
+        if (currentUploadedFiles.length > 0) {
+          processUploadedFiles();
+        } else {
+          const textarea = document.getElementById("contract-text");
+          if (textarea) textarea.value = "";
+          if (fileInfo) fileInfo.classList.add("hidden");
+          updateTextStats();
+        }
+      });
+    });
+  }
+
+  async function processUploadedFiles() {
+    if (!currentUploadedFiles.length) return;
+
+    const count = currentUploadedFiles.length;
+    const fileNames = currentUploadedFiles.map(f => f.name).join(", ");
 
     if (fileInfo) {
-      fileInfo.textContent = `Đang bóc tách tệp: ${file.name} (${(file.size / 1024).toFixed(1)} KB)...`;
+      fileInfo.textContent = `Đang bóc tách & ghép nối ${count} tệp: ${fileNames.length > 60 ? fileNames.substring(0, 57) + "..." : fileNames}...`;
       fileInfo.classList.remove("hidden");
       fileInfo.style.backgroundColor = "";
       fileInfo.style.borderColor = "";
@@ -329,7 +393,13 @@ Hai bên cùng thỏa thuận ký kết hợp đồng với các điều khoản
     }
 
     const formData = new FormData();
-    formData.append("file", file);
+    currentUploadedFiles.forEach(f => {
+      formData.append("files", f);
+    });
+    // Giữ tương thích ngược với trường "file" đơn lẻ
+    if (currentUploadedFiles.length === 1) {
+      formData.append("file", currentUploadedFiles[0]);
+    }
 
     const endpoints = [`${API_BASE}/ocr`, "/ocr"];
     for (const url of endpoints) {
@@ -347,7 +417,8 @@ Hai bên cùng thỏa thuận ký kết hợp đồng với các điều khoản
             updateTextStats();
           }
           if (fileInfo) {
-            fileInfo.textContent = `✓ Đã trích xuất thành công: ${file.name} (${data.stats?.word_count || 0} từ)`;
+            const wordCount = data.stats?.word_count || (data.text ? data.text.trim().split(/\s+/).length : 0);
+            fileInfo.textContent = `✓ Đã trích xuất & ghép nối thành công ${count} tài liệu (${wordCount} từ)`;
           }
           return;
         }
@@ -356,29 +427,56 @@ Hai bên cùng thỏa thuận ký kết hợp đồng với các điều khoản
       }
     }
 
-    // Nếu Backend API chưa xử lý được tệp nhị phân
-    if (isBinary) {
+    // Kiểm tra nếu có bất kỳ tệp nhị phân nào (.docx, .pdf, ảnh)
+    const hasBinary = currentUploadedFiles.some(file => {
+      const lower = file.name.toLowerCase();
+      return lower.endsWith(".docx") || lower.endsWith(".doc") ||
+             lower.endsWith(".pdf") || lower.endsWith(".png") ||
+             lower.endsWith(".jpg") || lower.endsWith(".jpeg") ||
+             lower.endsWith(".webp") || (file.type && file.type.startsWith("image/"));
+    });
+
+    if (hasBinary) {
       if (fileInfo) {
         fileInfo.textContent = `⚠️ Backend API đang Offline hoặc đang khởi động: Không thể giải mã tệp nhị phân (.docx / .pdf / ảnh) bằng trình duyệt. Vui lòng thử lại sau giây lát hoặc dán văn bản trực tiếp.`;
         fileInfo.style.backgroundColor = "var(--yellow-bg)";
         fileInfo.style.borderColor = "var(--yellow-border)";
         fileInfo.style.color = "var(--yellow-text)";
       }
-      alert(`⚠️ Không thể bóc tách nội dung tệp nhị phân "${file.name}" khi Backend API chưa sẵn sàng.\n\nNguyên nhân: Tệp Word (.docx), PDF và Ảnh cần thư viện Python ở Backend để giải mã cấu trúc nén ZIP.\n\nGiải pháp: Vui lòng đợi Backend online hoặc dán trực tiếp nội dung văn bản vào ô soạn thảo.`);
+      alert(`⚠️ Không thể bóc tách nội dung tệp nhị phân khi Backend API chưa sẵn sàng.\n\nNguyên nhân: Tệp Word (.docx), PDF và Ảnh chụp cần thư viện Python ở Backend để trích xuất văn bản.\n\nGiải pháp: Vui lòng đợi Backend khởi động xong hoặc dán trực tiếp nội dung văn bản vào ô soạn thảo.`);
       return;
     }
 
-    // Chỉ đọc văn bản thuần bằng FileReader nếu là file .txt hoặc .md
-    const reader = new FileReader();
-    reader.onload = (evt) => {
+    // Nếu toàn bộ là tệp văn bản thuần (.txt, .md), đọc bằng FileReader
+    try {
+      const filePromises = currentUploadedFiles.map((file, idx) => {
+        return new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onload = (evt) => {
+            const content = evt.target.result;
+            if (currentUploadedFiles.length > 1) {
+              resolve(`=== [TÀI LIỆU / PHỤ LỤC ${idx + 1}: ${file.name}] ===\n${content}`);
+            } else {
+              resolve(content);
+            }
+          };
+          reader.readAsText(file, "UTF-8");
+        });
+      });
+
+      const docs = await Promise.all(filePromises);
+      const combined = docs.join("\n\n");
       const textarea = document.getElementById("contract-text");
       if (textarea) {
-        textarea.value = evt.target.result;
+        textarea.value = combined;
         updateTextStats();
       }
-      if (fileInfo) fileInfo.textContent = `✓ Đã nạp văn bản: ${file.name}`;
-    };
-    reader.readAsText(file, "UTF-8");
+      if (fileInfo) {
+        fileInfo.textContent = `✓ Đã nạp ${count} tệp văn bản thuần`;
+      }
+    } catch (err) {
+      console.error("Lỗi khi đọc tệp văn bản:", err);
+    }
   }
 
   // Cập nhật thống kê từ & ký tự
@@ -401,6 +499,9 @@ Hai bên cùng thỏa thuận ký kết hợp đồng với các điều khoản
   const btnClear = document.getElementById("btn-clear");
   if (btnClear) {
     btnClear.addEventListener("click", () => {
+      currentUploadedFiles = [];
+      if (fileInput) fileInput.value = "";
+      renderFileChips();
       if (contractTextarea) contractTextarea.value = "";
       if (fileInfo) fileInfo.classList.add("hidden");
       updateTextStats();

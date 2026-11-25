@@ -89,14 +89,15 @@
           </div>
         </div>
 
-        <!-- File Upload Area -->
+        <!-- File Upload Area (Hỗ trợ tải lên tối đa 7 tệp / ảnh chụp) -->
         <div class="upload-box" id="drop-zone">
-          <input type="file" id="file-input" accept=".txt,.pdf,.docx,.doc,.png,.jpg,.jpeg,.webp" class="file-hidden">
+          <input type="file" id="file-input" accept=".txt,.pdf,.docx,.doc,.png,.jpg,.jpeg,.webp" class="file-hidden" multiple>
           <div class="upload-icon">📤</div>
           <div class="upload-text">
-            <strong>Kéo thả tệp hợp đồng vào đây</strong> hoặc <span class="upload-link">Chọn tệp từ máy tính</span>
+            <strong>Kéo thả tối đa 7 tệp hợp đồng / phụ lục / ảnh chụp vào đây</strong> hoặc <span class="upload-link">Chọn tệp từ máy tính</span>
           </div>
-          <p class="upload-hint">Tự động nhận diện OCR tiếng Việt đa phương thức qua Smart Router</p>
+          <p class="upload-hint">Tự động nhận diện đa phương thức (PDF, Docx, Ảnh OCR) và ghép nối tối đa 7 tài liệu</p>
+          <div id="file-chips" class="file-chips-container hidden"></div>
           <div id="file-info" class="file-info hidden"></div>
         </div>
 

@@ -286,30 +286,60 @@ def get_rules(contract_type: Optional[str] = None):
     return result
 
 
-@api_router.post("/ocr", summary="Bóc tách văn bản hợp đồng từ tệp hoặc văn bản thô")
+@api_router.post("/ocr", summary="Bóc tách văn bản hợp đồng từ tệp (tối đa 7 tệp/ảnh) hoặc văn bản thô")
 async def extract_contract_text(
     request: Request,
     file: Optional[UploadFile] = File(None),
+    files: Optional[List[UploadFile]] = File(None),
     text: Optional[str] = Form(None)
 ):
     """
-    Nhận tệp tải lên (PDF, DOCX, Ảnh, TXT) hoặc chuỗi văn bản,
-    chạy qua Smart Ingestion Router và trả về văn bản thô kèm thống kê.
+    Nhận tệp tải lên (hỗ trợ tối đa 7 ảnh chụp/PDF/Word/TXT) hoặc chuỗi văn bản,
+    chạy qua Smart Ingestion Router và tự động ghép nối thành văn bản hoàn chỉnh.
     """
     extracted_text = ""
     source_filename = "direct_input.txt"
 
     try:
-        # 1. Nhận tệp tải lên multipart
-        if file is not None and file.filename:
-            source_filename = file.filename
-            file_bytes = await file.read()
-            if not file_bytes:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Tệp tải lên rỗng."
-                )
-            extracted_text = route_document(file_bytes, filename=source_filename)
+        raw_files: List[UploadFile] = []
+        if files:
+            raw_files.extend(files)
+        if file and file not in raw_files:
+            raw_files.append(file)
+
+        # Quét thêm danh sách file từ form multipart
+        try:
+            form = await request.form()
+            for key in ["files", "file"]:
+                for item in form.getlist(key):
+                    if hasattr(item, "filename") and item.filename and item not in raw_files:
+                        raw_files.append(item)
+        except Exception:
+            pass
+
+        # 1. Xử lý danh sách tệp tải lên (tối đa 7 tệp)
+        if raw_files:
+            active_files = raw_files[:7]
+            extracted_docs = []
+            valid_names = []
+
+            for idx, f in enumerate(active_files, 1):
+                file_bytes = await f.read()
+                if not file_bytes:
+                    continue
+                doc_text = route_document(file_bytes, filename=f.filename)
+                if doc_text and not doc_text.strip().startswith("[CẢNH BÁO ĐỊNH DẠNG]"):
+                    if len(active_files) > 1:
+                        extracted_docs.append(f"=== [TÀI LIỆU / PHỤ LỤC {idx}: {f.filename}] ===\n{doc_text}")
+                    else:
+                        extracted_docs.append(doc_text)
+                    valid_names.append(f.filename)
+                elif doc_text:
+                    extracted_docs.append(f"=== [TÀI LIỆU {idx}: {f.filename}] ===\n{doc_text}")
+                    valid_names.append(f.filename)
+
+            extracted_text = "\n\n".join(extracted_docs).strip()
+            source_filename = ", ".join(valid_names) if valid_names else "uploaded_files"
 
         # 2. Nhận từ form field 'text'
         elif text and text.strip():

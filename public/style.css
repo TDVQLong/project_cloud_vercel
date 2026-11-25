@@ -349,6 +349,39 @@ body {
   margin-top: 4px;
 }
 
+.file-chips-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  justify-content: center;
+}
+
+.file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background-color: #EFF6FF;
+  border: 1px solid #BFDBFE;
+  border-radius: 16px;
+  padding: 4px 12px;
+  font-size: 0.8rem;
+  color: #1D4ED8;
+  font-weight: 500;
+}
+
+.file-chip .chip-remove {
+  cursor: pointer;
+  color: #6B7280;
+  font-size: 0.95rem;
+  font-weight: bold;
+  margin-left: 4px;
+}
+
+.file-chip .chip-remove:hover {
+  color: #DC2626;
+}
+
 .file-info {
   margin-top: 10px;
   padding: 6px 12px;
