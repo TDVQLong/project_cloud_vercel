@@ -74,36 +74,30 @@ app = FastAPI(
 # Middleware xử lý định tuyến cho Vercel Serverless Function
 @app.middleware("http")
 async def vercel_routing_middleware(request: Request, call_next):
-    # 1. Trích xuất path thực tế từ query parameter __path__ do vercel.json chuyển tiếp
-    target_path = request.query_params.get("__path__")
+    # Khôi phục path thực tế từ các header của Vercel
+    target_path = None
+    for header in ["x-forwarded-path", "x-matched-path", "x-original-uri", "x-real-path"]:
+        val = request.headers.get(header)
+        if val and not val.startswith("/api/index.py") and "(.*)" not in val:
+            target_path = val
+            break
 
-    # 2. Nếu không có query param, quét các headers proxy chuẩn của Vercel
+    # Kiểm tra thêm header x-now-route-matches (dạng 1=samples hoặc 1=ocr)
     if not target_path:
-        for header_name in ["x-forwarded-path", "x-matched-path", "x-original-uri", "x-real-path"]:
-            h_val = request.headers.get(header_name)
-            if h_val and not h_val.startswith("/api/index.py") and "(.*)" not in h_val:
-                target_path = h_val
-                break
+        route_matches = request.headers.get("x-now-route-matches")
+        if route_matches and "1=" in route_matches:
+            for part in route_matches.split("&"):
+                if part.startswith("1="):
+                    target_path = f"/api/{part[2:]}"
+                    break
 
-    # 3. Điều chỉnh scope['path'] để FastAPI route đúng vào endpoint tương ứng
     curr_path = request.scope.get("path", "")
-    if target_path:
+    if target_path and curr_path in ["/api/index.py", "/api/index.py/", "/api/index"]:
         clean_path = target_path.split("?")[0].strip("/")
         if not clean_path.startswith("api/"):
             request.scope["path"] = f"/api/{clean_path}"
         else:
             request.scope["path"] = f"/{clean_path}"
-
-        # Làm sạch __path__ khỏi query_string trong scope để không gây nhiễu endpoint
-        raw_qs = request.scope.get("query_string", b"").decode("utf-8")
-        if "__path__=" in raw_qs:
-            filtered_qs = "&".join(
-                p for p in raw_qs.split("&") if not p.startswith("__path__=")
-            )
-            request.scope["query_string"] = filtered_qs.encode("utf-8")
-    elif curr_path in ["/api/index.py", "/api/index.py/", "/api/index", "/"]:
-        # Mặc định trỏ về health check nếu không có path cụ thể
-        request.scope["path"] = "/api/health"
 
     response = await call_next(request)
     return response
@@ -178,6 +172,16 @@ def check_health(request: Optional[Request] = None):
     rental_rules_exist = (DATA_DIR / "legal_rules.json").exists()
     employment_rules_exist = (DATA_DIR / "legal_rules_employment.json").exists()
 
+    debug_info = {}
+    if request:
+        debug_info = {
+            "headers": dict(request.headers),
+            "scope_path": request.scope.get("path", ""),
+            "scope_root_path": request.scope.get("root_path", ""),
+            "scope_raw_path": str(request.scope.get("raw_path", b"")),
+            "scope_query": request.scope.get("query_string", b"").decode("utf-8", errors="ignore"),
+        }
+
     return {
         "status": "healthy",
         "service": "NLP333 LegalTech API (Vercel Serverless)",
@@ -194,7 +198,8 @@ def check_health(request: Optional[Request] = None):
             "has_api_key": bool(openrouter_key or openai_key or gemini_key or groq_key),
             "configured_model": os.getenv("OPENROUTER_MODEL") or os.getenv("LLM_MODEL") or "google/gemini-2.5-flash",
             "rule_based_fallback_ready": True
-        }
+        },
+        "debug": debug_info
     }
 
 
@@ -598,23 +603,8 @@ def root_endpoint():
 @app.api_route("/api/index.py", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"], include_in_schema=False)
 async def direct_index_py_handler(request: Request):
     """
-    Fallback an toàn xử lý trực tiếp request tới /api/index.py theo target_path
+    Fallback an toàn khi request chạm vào /api/index.py
     """
-    target_path = request.query_params.get("__path__", "").strip("/")
-    if target_path == "ocr" and request.method == "POST":
-        return await extract_contract_text(request)
-    elif target_path == "analyze" and request.method == "POST":
-        body = await request.json()
-        req_obj = AnalyzeRequest(**body)
-        return await analyze_contract(req_obj)
-    elif target_path == "assemble" and request.method == "POST":
-        body = await request.json()
-        req_obj = AssembleRequest(**body)
-        return await assemble_contract(req_obj)
-    elif target_path == "samples":
-        return list_samples()
-    elif target_path == "rules":
-        return get_rules()
     return check_health(request)
 
 
