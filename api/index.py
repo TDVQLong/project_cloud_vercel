@@ -74,12 +74,36 @@ app = FastAPI(
 # Middleware xử lý định tuyến cho Vercel Serverless Function
 @app.middleware("http")
 async def vercel_routing_middleware(request: Request, call_next):
-    # Khôi phục path thực tế từ header x-matched-path nếu Vercel rewrite thành /api/index.py
-    matched_path = request.headers.get("x-matched-path")
+    # 1. Trích xuất path thực tế từ query parameter __path__ do vercel.json chuyển tiếp
+    target_path = request.query_params.get("__path__")
+
+    # 2. Nếu không có query param, quét các headers proxy chuẩn của Vercel
+    if not target_path:
+        for header_name in ["x-forwarded-path", "x-matched-path", "x-original-uri", "x-real-path"]:
+            h_val = request.headers.get(header_name)
+            if h_val and not h_val.startswith("/api/index.py") and "(.*)" not in h_val:
+                target_path = h_val
+                break
+
+    # 3. Điều chỉnh scope['path'] để FastAPI route đúng vào endpoint tương ứng
     curr_path = request.scope.get("path", "")
-    if curr_path in ["/api/index.py", "/api/index.py/", "/api/index"]:
-        if matched_path and matched_path not in ["/api/index.py", "/api/index.py/"]:
-            request.scope["path"] = matched_path
+    if target_path:
+        clean_path = target_path.split("?")[0].strip("/")
+        if not clean_path.startswith("api/"):
+            request.scope["path"] = f"/api/{clean_path}"
+        else:
+            request.scope["path"] = f"/{clean_path}"
+
+        # Làm sạch __path__ khỏi query_string trong scope để không gây nhiễu endpoint
+        raw_qs = request.scope.get("query_string", b"").decode("utf-8")
+        if "__path__=" in raw_qs:
+            filtered_qs = "&".join(
+                p for p in raw_qs.split("&") if not p.startswith("__path__=")
+            )
+            request.scope["query_string"] = filtered_qs.encode("utf-8")
+    elif curr_path in ["/api/index.py", "/api/index.py/", "/api/index", "/"]:
+        # Mặc định trỏ về health check nếu không có path cụ thể
+        request.scope["path"] = "/api/health"
 
     response = await call_next(request)
     return response
@@ -132,7 +156,7 @@ class AssembleRequest(BaseModel):
 # =============================================================================
 
 @api_router.get("/health", summary="Kiểm tra trạng thái dịch vụ & cấu hình môi trường")
-def check_health():
+def check_health(request: Optional[Request] = None):
     """
     Kiểm tra trạng thái sẵn sàng của dịch vụ, thư mục data và các biến môi trường LLM API.
     """
@@ -571,9 +595,27 @@ def root_endpoint():
         "health_check": "/api/health"
     }
 
-@app.get("/api/index.py", include_in_schema=False)
-def direct_index_py_handler():
-    return check_health()
+@app.api_route("/api/index.py", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"], include_in_schema=False)
+async def direct_index_py_handler(request: Request):
+    """
+    Fallback an toàn xử lý trực tiếp request tới /api/index.py theo target_path
+    """
+    target_path = request.query_params.get("__path__", "").strip("/")
+    if target_path == "ocr" and request.method == "POST":
+        return await extract_contract_text(request)
+    elif target_path == "analyze" and request.method == "POST":
+        body = await request.json()
+        req_obj = AnalyzeRequest(**body)
+        return await analyze_contract(req_obj)
+    elif target_path == "assemble" and request.method == "POST":
+        body = await request.json()
+        req_obj = AssembleRequest(**body)
+        return await assemble_contract(req_obj)
+    elif target_path == "samples":
+        return list_samples()
+    elif target_path == "rules":
+        return get_rules()
+    return check_health(request)
 
 
 # Cho phép chạy kiểm thử trực tiếp: python api/index.py

@@ -402,6 +402,7 @@ Hai bên cùng thỏa thuận ký kết hợp đồng với các điều khoản
     }
 
     const endpoints = [`${API_BASE}/ocr`, "/ocr"];
+    let lastErrorMsg = "";
     for (const url of endpoints) {
       try {
         const res = await fetch(url, {
@@ -421,9 +422,14 @@ Hai bên cùng thỏa thuận ký kết hợp đồng với các điều khoản
             fileInfo.textContent = `✓ Đã trích xuất & ghép nối thành công ${count} tài liệu (${wordCount} từ)`;
           }
           return;
+        } else {
+          const errDetail = await res.text();
+          lastErrorMsg = `HTTP ${res.status} - ${errDetail.substring(0, 120)}`;
+          console.warn(`Lỗi gọi OCR tại ${url}:`, res.status, errDetail);
         }
       } catch (err) {
-        console.warn(`Lỗi gọi OCR tại ${url}:`, err);
+        lastErrorMsg = err.message || String(err);
+        console.warn(`Lỗi kết nối OCR tại ${url}:`, err);
       }
     }
 
@@ -438,12 +444,12 @@ Hai bên cùng thỏa thuận ký kết hợp đồng với các điều khoản
 
     if (hasBinary) {
       if (fileInfo) {
-        fileInfo.textContent = `⚠️ Backend API đang Offline hoặc đang khởi động: Không thể giải mã tệp nhị phân (.docx / .pdf / ảnh) bằng trình duyệt. Vui lòng thử lại sau giây lát hoặc dán văn bản trực tiếp.`;
+        fileInfo.textContent = `⚠️ Lỗi xử lý OCR: ${lastErrorMsg || "Không thể bóc tách ảnh/tài liệu nhị phân"}. Vui lòng thử lại hoặc dán văn bản trực tiếp.`;
         fileInfo.style.backgroundColor = "var(--yellow-bg)";
         fileInfo.style.borderColor = "var(--yellow-border)";
         fileInfo.style.color = "var(--yellow-text)";
       }
-      alert(`⚠️ Không thể bóc tách nội dung tệp nhị phân khi Backend API chưa sẵn sàng.\n\nNguyên nhân: Tệp Word (.docx), PDF và Ảnh chụp cần thư viện Python ở Backend để trích xuất văn bản.\n\nGiải pháp: Vui lòng đợi Backend khởi động xong hoặc dán trực tiếp nội dung văn bản vào ô soạn thảo.`);
+      alert(`⚠️ Không thể bóc tách nội dung tệp nhị phân:\n\n${lastErrorMsg || "Không thể kết nối Backend"}\n\nNguyên nhân có thể do: Định dạng ảnh quá lớn, lỗi mạng hoặc thư viện Vision OCR đang bận.\nGiải pháp: Vui lòng thử lại sau giây lát hoặc dán trực tiếp nội dung văn bản vào ô soạn thảo.`);
       return;
     }
 
