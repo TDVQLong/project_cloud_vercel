@@ -151,26 +151,27 @@ Hai bên cùng thỏa thuận ký kết hợp đồng với các điều khoản
     const text = document.getElementById("api-status-text");
     const dot = badge ? badge.querySelector(".status-dot") : null;
 
-    try {
-      const res = await fetch(`${API_BASE}/health`, { method: "GET" });
-      if (res.ok) {
-        const data = await res.json();
-        state.isApiOnline = true;
-        if (text) text.textContent = "API: Sẵn sàng (FastAPI sin1)";
-        if (dot) {
-          dot.className = "status-dot online";
+    const urls = [`${API_BASE}/health`, "/health"];
+    for (const url of urls) {
+      try {
+        const res = await fetch(url, { method: "GET" });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.status === "healthy") {
+            state.isApiOnline = true;
+            if (text) text.textContent = "API: Sẵn sàng (FastAPI sin1)";
+            if (dot) dot.className = "status-dot online";
+            return;
+          }
         }
-        return;
+      } catch (err) {
+        // Tiếp tục thử URL dự phòng
       }
-    } catch (err) {
-      console.warn("Không kết nối được backend API, kích hoạt chế độ Fallback:", err);
     }
 
     state.isApiOnline = false;
     if (text) text.textContent = "API: Offline (Client Fallback Ready)";
-    if (dot) {
-      dot.className = "status-dot offline";
-    }
+    if (dot) dot.className = "status-dot offline";
   }
 
   // =========================================================================
@@ -313,37 +314,61 @@ Hai bên cùng thỏa thuận ký kết hợp đồng với các điều khoản
   async function handleFileUpload(file) {
     if (!file) return;
 
+    const lowerName = file.name.toLowerCase();
+    const isBinary = lowerName.endsWith(".docx") || lowerName.endsWith(".doc") ||
+                     lowerName.endsWith(".pdf") || lowerName.endsWith(".png") ||
+                     lowerName.endsWith(".jpg") || lowerName.endsWith(".jpeg") ||
+                     lowerName.endsWith(".webp") || (file.type && file.type.startsWith("image/"));
+
     if (fileInfo) {
       fileInfo.textContent = `Đang bóc tách tệp: ${file.name} (${(file.size / 1024).toFixed(1)} KB)...`;
       fileInfo.classList.remove("hidden");
+      fileInfo.style.backgroundColor = "";
+      fileInfo.style.borderColor = "";
+      fileInfo.style.color = "";
     }
 
     const formData = new FormData();
     formData.append("file", file);
 
-    try {
-      const res = await fetch(`${API_BASE}/ocr`, {
-        method: "POST",
-        body: formData
-      });
+    const endpoints = [`${API_BASE}/ocr`, "/ocr"];
+    for (const url of endpoints) {
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          body: formData
+        });
 
-      if (res.ok) {
-        const data = await res.json();
-        const textarea = document.getElementById("contract-text");
-        if (textarea) {
-          textarea.value = data.text;
-          updateTextStats();
+        if (res.ok) {
+          const data = await res.json();
+          const textarea = document.getElementById("contract-text");
+          if (textarea) {
+            textarea.value = data.text;
+            updateTextStats();
+          }
+          if (fileInfo) {
+            fileInfo.textContent = `✓ Đã trích xuất thành công: ${file.name} (${data.stats?.word_count || 0} từ)`;
+          }
+          return;
         }
-        if (fileInfo) {
-          fileInfo.textContent = `✓ Đã trích xuất thành công: ${file.name} (${data.stats?.word_count || 0} từ)`;
-        }
-        return;
+      } catch (err) {
+        console.warn(`Lỗi gọi OCR tại ${url}:`, err);
       }
-    } catch (err) {
-      console.warn("Không thể gọi /api/ocr, thử đọc dạng Text cơ bản:", err);
     }
 
-    // Fallback: Đọc file text cơ bản bằng FileReader nếu file là .txt
+    // Nếu Backend API chưa xử lý được tệp nhị phân
+    if (isBinary) {
+      if (fileInfo) {
+        fileInfo.textContent = `⚠️ Backend API đang Offline hoặc đang khởi động: Không thể giải mã tệp nhị phân (.docx / .pdf / ảnh) bằng trình duyệt. Vui lòng thử lại sau giây lát hoặc dán văn bản trực tiếp.`;
+        fileInfo.style.backgroundColor = "var(--yellow-bg)";
+        fileInfo.style.borderColor = "var(--yellow-border)";
+        fileInfo.style.color = "var(--yellow-text)";
+      }
+      alert(`⚠️ Không thể bóc tách nội dung tệp nhị phân "${file.name}" khi Backend API chưa sẵn sàng.\n\nNguyên nhân: Tệp Word (.docx), PDF và Ảnh cần thư viện Python ở Backend để giải mã cấu trúc nén ZIP.\n\nGiải pháp: Vui lòng đợi Backend online hoặc dán trực tiếp nội dung văn bản vào ô soạn thảo.`);
+      return;
+    }
+
+    // Chỉ đọc văn bản thuần bằng FileReader nếu là file .txt hoặc .md
     const reader = new FileReader();
     reader.onload = (evt) => {
       const textarea = document.getElementById("contract-text");

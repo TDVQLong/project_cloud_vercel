@@ -71,6 +71,19 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
 )
 
+# Middleware xử lý định tuyến cho Vercel Serverless Function
+@app.middleware("http")
+async def vercel_routing_middleware(request: Request, call_next):
+    # Khôi phục path thực tế từ header x-matched-path nếu Vercel rewrite thành /api/index.py
+    matched_path = request.headers.get("x-matched-path")
+    curr_path = request.scope.get("path", "")
+    if curr_path in ["/api/index.py", "/api/index.py/", "/api/index"]:
+        if matched_path and matched_path not in ["/api/index.py", "/api/index.py/"]:
+            request.scope["path"] = matched_path
+
+    response = await call_next(request)
+    return response
+
 # Kích hoạt CORS hỗ trợ tất cả các domain frontend kết nối
 app.add_middleware(
     CORSMiddleware,
@@ -513,30 +526,24 @@ def assemble_contract(req: AssembleRequest):
 
 
 # =============================================================================
-# 6. ĐĂNG KÝ ROUTER VỚI VÀ KHÔNG CÓ TIỀN TỐ /api (HỖ TRỢ VERCEL MỌI CẤU HÌNH)
+# 6. ĐĂNG KÝ ROUTER ĐỒNG THỜI VỚI VÀ KHÔNG CÓ TIỀN TỐ /api (HỖ TRỢ MỌI CẤU HÌNH VERCEL)
 # =============================================================================
 app.include_router(api_router, prefix="/api")
+app.include_router(api_router, prefix="")
 
-# Phục vụ giao diện tĩnh từ public/ khi chạy cục bộ (local development)
-PUBLIC_DIR = PROJECT_ROOT / "public"
-if PUBLIC_DIR.exists():
-    try:
-        from fastapi.staticfiles import StaticFiles
-        app.mount("/", StaticFiles(directory=str(PUBLIC_DIR), html=True), name="static")
-    except Exception:
-        pass
-else:
-    app.include_router(api_router, prefix="")
+@app.get("/", summary="Trang chủ API")
+def root_endpoint():
+    return {
+        "service": "NLP333 Multi-Agent Legal AI API",
+        "description": "API rà soát & đàm phán hợp đồng tiếng Việt cho Vercel Cloud",
+        "status": "online",
+        "documentation": "/api/docs",
+        "health_check": "/api/health"
+    }
 
-    @app.get("/", summary="Trang chủ API")
-    def root_endpoint():
-        return {
-            "service": "NLP333 Multi-Agent Legal AI API",
-            "description": "API rà soát & đàm phán hợp đồng tiếng Việt cho Vercel Cloud",
-            "status": "online",
-            "documentation": "/api/docs",
-            "health_check": "/api/health"
-        }
+@app.get("/api/index.py", include_in_schema=False)
+def direct_index_py_handler():
+    return check_health()
 
 
 # Cho phép chạy kiểm thử trực tiếp: python api/index.py
