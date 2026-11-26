@@ -150,7 +150,7 @@ class AssembleRequest(BaseModel):
 # =============================================================================
 
 @api_router.get("/health", summary="Kiểm tra trạng thái dịch vụ & cấu hình môi trường")
-def check_health(request: Optional[Request] = None):
+def check_health(request: Request):
     """
     Kiểm tra trạng thái sẵn sàng của dịch vụ, thư mục data và các biến môi trường LLM API.
     """
