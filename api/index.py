@@ -74,26 +74,10 @@ app = FastAPI(
 # Middleware xử lý định tuyến cho Vercel Serverless Function
 @app.middleware("http")
 async def vercel_routing_middleware(request: Request, call_next):
-    # Khôi phục path thực tế từ các header của Vercel
-    target_path = None
-    for header in ["x-forwarded-path", "x-matched-path", "x-original-uri", "x-real-path"]:
-        val = request.headers.get(header)
-        if val and not val.startswith("/api/index.py") and "(.*)" not in val:
-            target_path = val
-            break
-
-    # Kiểm tra thêm header x-now-route-matches (dạng 1=samples hoặc 1=ocr)
-    if not target_path:
-        route_matches = request.headers.get("x-now-route-matches")
-        if route_matches and "1=" in route_matches:
-            for part in route_matches.split("&"):
-                if part.startswith("1="):
-                    target_path = f"/api/{part[2:]}"
-                    break
-
-    curr_path = request.scope.get("path", "")
-    if target_path and curr_path in ["/api/index.py", "/api/index.py/", "/api/index"]:
-        clean_path = target_path.split("?")[0].strip("/")
+    # Khôi phục path thực tế từ query parameter __route__ do vercel.json chuyển tiếp
+    route_param = request.query_params.get("__route__")
+    if route_param:
+        clean_path = route_param.strip("/")
         if not clean_path.startswith("api/"):
             request.scope["path"] = f"/api/{clean_path}"
         else:
@@ -331,18 +315,29 @@ async def extract_contract_text(
 
     try:
         raw_files: List[UploadFile] = []
-        if files:
+        if isinstance(files, list):
             raw_files.extend(files)
-        if file and file not in raw_files:
+        elif hasattr(files, "filename") and getattr(files, "filename", None):
+            raw_files.append(files)
+
+        if hasattr(file, "filename") and getattr(file, "filename", None) and file not in raw_files:
             raw_files.append(file)
+
+        form_text = ""
+        if isinstance(text, str) and text.strip():
+            form_text = text.strip()
 
         # Quét thêm danh sách file từ form multipart
         try:
             form = await request.form()
             for key in ["files", "file"]:
                 for item in form.getlist(key):
-                    if hasattr(item, "filename") and item.filename and item not in raw_files:
+                    if hasattr(item, "filename") and getattr(item, "filename", None) and item not in raw_files:
                         raw_files.append(item)
+            if not form_text and "text" in form:
+                val = form["text"]
+                if isinstance(val, str) and val.strip():
+                    form_text = val.strip()
         except Exception:
             pass
 
@@ -371,8 +366,8 @@ async def extract_contract_text(
             source_filename = ", ".join(valid_names) if valid_names else "uploaded_files"
 
         # 2. Nhận từ form field 'text'
-        elif text and text.strip():
-            extracted_text = text.strip()
+        elif form_text:
+            extracted_text = form_text
 
         # 3. Nhận từ raw JSON payload
         else:
@@ -603,8 +598,29 @@ def root_endpoint():
 @app.api_route("/api/index.py", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"], include_in_schema=False)
 async def direct_index_py_handler(request: Request):
     """
-    Fallback an toàn khi request chạm vào /api/index.py
+    Dispatcher đa năng xử lý mọi request khi Vercel rewrite về /api/index.py
     """
+    route_name = (request.query_params.get("__route__") or "").strip("/")
+
+    if route_name == "health":
+        return check_health(request)
+    elif route_name == "samples":
+        return list_samples(category=request.query_params.get("category"))
+    elif route_name.startswith("samples/"):
+        parts = route_name.split("/")
+        if len(parts) >= 3:
+            return get_sample_content(parts[1], parts[2])
+    elif route_name == "rules":
+        return get_rules(contract_type=request.query_params.get("contract_type"))
+    elif route_name == "ocr" and request.method == "POST":
+        return await extract_contract_text(request)
+    elif route_name == "analyze" and request.method == "POST":
+        body = await request.json()
+        return await analyze_contract(AnalyzeRequest(**body))
+    elif route_name == "assemble" and request.method == "POST":
+        body = await request.json()
+        return await assemble_contract(AssembleRequest(**body))
+
     return check_health(request)
 
 
